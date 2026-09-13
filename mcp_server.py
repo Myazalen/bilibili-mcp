@@ -15,6 +15,7 @@ import random
 import re
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
@@ -127,6 +128,24 @@ def _cleanup_qrcode() -> None:
     """清理扫码登录生成的临时二维码图片"""
     if QR_FILE.exists():
         QR_FILE.unlink()
+
+
+# B站返回的时间戳统一按北京时间格式化，避免服务器时区不是 UTC+8 时日期对不上
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def _format_ts(ts, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """把 Unix 时间戳格式化成北京时间字符串，无效值返回空串"""
+    try:
+        ts = int(ts)
+    except (TypeError, ValueError):
+        return ""
+    if ts <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(ts, _CN_TZ).strftime(fmt)
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 # ========== 登录会话（进程级缓存） ==========
@@ -701,6 +720,7 @@ async def bili_comments(bvid: str, num: int = 30) -> str:
                     "like": r.get("like", 0),
                     "reply_count": r.get("rcount", 0),
                     "time": r.get("ctime", 0),
+                    "time_at": _format_ts(r.get("ctime", 0)),
                 }
                 # 子评论
                 sub_replies = []
@@ -1580,7 +1600,8 @@ async def bili_user_videos(uid: int, pn: int = 1, ps: int = 30, order: str = "pu
         keyword: 搜索关键词（在该用户视频中搜索）
 
     Returns:
-        视频列表
+        视频列表，每条含 created（Unix 时间戳）、created_at（北京时间 yyyy-mm-dd HH:MM:SS）
+        和 created_date（北京时间日期）
     """
     cred = get_cred_any()
     u = user.User(uid=uid, credential=cred)
@@ -1595,12 +1616,15 @@ async def bili_user_videos(uid: int, pn: int = 1, ps: int = 30, order: str = "pu
     result = await u.get_videos(pn=pn, ps=ps, order=order_enum, keyword=keyword)
     videos = []
     for item in result.get("list", {}).get("vlist", []):
+        created = item.get("created", 0)
         videos.append({
             "bvid": item.get("bvid", ""),
             "title": item.get("title", ""),
             "play": item.get("play", 0),
             "comment": item.get("comment", 0),
-            "created": item.get("created", 0),
+            "created": created,
+            "created_at": _format_ts(created),
+            "created_date": _format_ts(created, "%Y-%m-%d"),
             "length": item.get("length", ""),
             "description": (item.get("description", "") or "")[:100],
         })
