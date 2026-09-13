@@ -3,6 +3,8 @@ bili_credential.json
 
 # 登录二维码（临时文件）
 qrcode_login.png
+# 扫码登录会话（临时文件，跨进程续期用）
+bili_login_session.json
 
 # Python
 __pycache__/

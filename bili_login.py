@@ -28,14 +28,22 @@ async def main():
         await asyncio.sleep(2)
 
     cred = qr.get_credential()
-    with open(CRED_FILE, "w") as f:
+    if not (cred.sessdata or "").strip():
+        print("\n❌ 扫码已确认，但没拿到有效的 SESSDATA（bilibili-api 解析登录返回串失败），凭证未保存。")
+        print("   请重新运行本脚本；若反复失败，可在 MCP 里用 bili_login_with_cookies 手动填入浏览器 Cookies。")
+        return
+
+    with open(CRED_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "sessdata": cred.sessdata,
             "bili_jct": cred.bili_jct,
             "buvid3": cred.buvid3,
+            "buvid4": cred.buvid4,
             "dedeuserid": cred.dedeuserid,
-        }, f)
+            "ac_time_value": cred.ac_time_value,
+        }, f, ensure_ascii=False)
     print(f"\n🎉 登录成功！凭证已保存到 {CRED_FILE}")
+    print("   建议再运行一次 MCP 的 bili_check_credential 确认登录态可用。")
 
 if __name__ == "__main__":
     asyncio.run(main())

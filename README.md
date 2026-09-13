@@ -4,7 +4,7 @@ B站（Bilibili）MCP Server —— 让 AI 助手直接操作B站。
 
 支持 OpenClaw / Claude Code / Cursor / Cline 等所有 MCP 客户端。
 
-**27 个工具**，覆盖登录认证、搜索采集、内容发布、数据分析、互动运营。
+**28 个工具**，覆盖登录认证、搜索采集、内容发布、数据分析、互动运营。
 
 ## 功能
 
@@ -15,6 +15,7 @@ B站（Bilibili）MCP Server —— 让 AI 助手直接操作B站。
 | `bili_login` | 扫码登录 | 生成二维码（base64图片），AI直接展示给用户扫码 |
 | `bili_login_check` | 登录状态检查 | 轮询扫码状态，扫码成功后自动保存凭证 |
 | `bili_check_credential` | 凭证验证 | 检查当前登录是否有效，返回用户名等信息 |
+| `bili_login_with_cookies` | 手动登录 | 直接填入浏览器 Cookies 完成登录，扫码解析失败时的兜底方案 |
 
 ### 数据采集
 
@@ -153,9 +154,10 @@ npx mcporter config add bilibili-mcp "python /path/to/bilibili-mcp/mcp_server.py
 
 ```
 bilibili-mcp/
-├── mcp_server.py          # MCP Server 主文件（27个tool）
+├── mcp_server.py          # MCP Server 主文件（28个tool）
 ├── bili_login.py           # 命令行扫码登录（备用）
 ├── bili_credential.json    # 登录凭证（自动生成，勿提交）
+├── bili_login_session.json # 扫码会话（自动生成，用于跨进程轮询，勿提交）
 ├── requirements.txt        # Python 依赖
 ├── README.md               # 项目说明
 ├── LICENSE                 # MIT 开源协议
@@ -170,6 +172,60 @@ bilibili-mcp/
 - 回复评论/发私信功能请谨慎使用，遵守B站社区规则
 - 视频上传未指定封面时，自动从视频第3秒截取（需要ffmpeg）
 - 本项目仅用于学习和研究
+
+## 常见问题
+
+### 报错 `Credential 类未提供 sessdata 或者为空`
+
+说明真正使用的凭证里 `SESSDATA` 是空的：B站取字幕（`/x/player/wbi/v2`）必须带登录态，
+而搜索是匿名接口，所以会出现"能搜索但取不到字幕"。
+
+按顺序排查：
+
+1. 调用 `bili_check_credential`，看返回的 `message`。若提示 `sessdata 为空`，说明凭证文件是空壳。
+2. 删除 `bili_credential.json` 后重新调用 `bili_login` 扫码（空凭证不会被误判成"已登录"了）。
+3. 若扫码后返回 `login_failed`，用 `bili_login_with_cookies` 兜底：浏览器登录B站 →
+   F12 → Application → Cookies → `https://www.bilibili.com`，把 `SESSDATA`（必需）、
+   `bili_jct`、`DedeUserID` 传给该工具。
+4. 登录成功后务必再调一次 `bili_check_credential`，只有返回 `logged_in: true` 且带用户名，
+   才代表登录态真的可用。
+
+> n8n 等以 stdio 方式接入的场景：MCP Server 每次执行可能新起进程，凭证只来自
+> `mcp_server.py` 同目录下的 `bili_credential.json`。若服务跑在容器里，请确认该文件
+> 落在容器内对应路径（挂载卷），否则会出现"明明登录了但工具说未登录"。
+
+### 报错 `网络错误，状态码：412` / 触发B站安全风控
+
+412 是B站 WAF 的拦截页（`The request was rejected because of the bilibili security control
+policy`），不是代码 bug，也不是凭证失效。触发条件主要是**同一 IP 的请求频率过高**，
+尤其是匿名请求连续调用空间类接口（`bili_user_videos`、`bili_crawl` 批量采集）。
+实测：匿名连续调用 `bili_user_videos`，第 2～3 次就会命中，风控窗口大约十几秒。
+
+已内置的缓解措施：
+
+- 所有请求串行化，且两次请求之间至少间隔 `BILI_MIN_REQUEST_INTERVAL` 秒（默认 2.0）
+- 命中 412 会退避重试（默认最多 2 次，等待 5s / 15s），仍失败则返回简短可读的错误
+  （不再把整页 HTML 抛给客户端）
+- 登录时补齐并持久化 `buvid3` / `buvid4`，让请求看起来像同一台设备
+- 开启 `bili_ticket`（B站网页端使用的反爬票据）
+
+可用环境变量调整：`BILI_MIN_REQUEST_INTERVAL`（秒，调大更保守）、`BILI_412_RETRY`（重试次数）。
+
+建议：
+
+1. 先完成登录。带登录态的请求风控阈值比匿名高得多，这是最有效的一步
+2. 降低采集频率和批量规模（`bili_crawl` 的 `max_videos`、`comments_per_video` 调小）
+3. 命中 412 后不要立刻连续重试，连续重试会延长封锁；等几分钟通常自愈
+4. 若长期频繁被拦（常见于云服务器/机房 IP），可在 `mcp_server.py` 里配置代理出口
+
+### 扫完码却一直登录不上
+
+- 二维码 180 秒内有效，超时需要重新调用 `bili_login`。
+- 扫码会话（`qrcode_key`）会写到 `bili_login_session.json`，所以 `bili_login` 和
+  `bili_login_check` 即使分两次调用、甚至中间 MCP 进程被重启（n8n 等 stdio 客户端常见），
+  也能继续轮询同一个二维码，不会出现"扫了码但服务端说没有登录会话"。
+- `bili_login_check` 返回 `login_failed` 说明登录接口没给出可用凭证，用
+  `bili_login_with_cookies` 手动填浏览器 Cookies 即可。
 
 ## License
 
