@@ -114,8 +114,8 @@ npx mcporter config add bilibili-mcp "python /path/to/bilibili-mcp/mcp_server.py
 {
   "mcpServers": {
     "bilibili-mcp": {
-      "command": "python",
-      "args": ["/path/to/bilibili-mcp/mcp_server.py"]
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/bilibili-mcp", "mcp_server.py"]
     }
   }
 }

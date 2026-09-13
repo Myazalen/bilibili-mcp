@@ -1,0 +1,11 @@
+[project]
+name = "bilibili-mcp"
+version = "0.1.0"
+description = "B站（Bilibili）MCP Server —— 让 AI 助手直接操作B站"
+requires-python = ">=3.10"
+
+dependencies = [
+    "bilibili-api-python>=17.0.0",
+    "aiohttp>=3.9.0",
+    "mcp>=1.0.0,<2",
+]
